@@ -1,0 +1,144 @@
+#!/bin/bash
+
+# ==============================================================================
+# SKRIP INSTALLER UNTUK TELEGRAM RESELLER BOT
+# ==============================================================================
+
+# -- Konfigurasi --
+REPO_URL="https://github.com/hokagelegend9999/x-forcev1.git"
+# Direktori di dalam repo yang berisi file-file bot
+PROJECT_SUBDIR="TELEGRAM-RESLLER" 
+# Direktori tempat bot akan diinstall
+INSTALL_DIR="/root/telegram_bot"
+# Nama untuk service systemd
+SERVICE_NAME="myxlbot.service"
+# Pengguna yang akan menjalankan service (disarankan 'botuser', bukan 'root')
+RUN_AS_USER="root" 
+
+# Fungsi untuk membersihkan instalasi sebelumnya
+cleanup_previous_installation() {
+    echo "--- Memeriksa dan membersihkan instalasi sebelumnya... ---"
+    
+    # Hentikan dan nonaktifkan service jika ada
+    systemctl stop "$SERVICE_NAME" &>/dev/null
+    systemctl disable "$SERVICE_NAME" &>/dev/null
+    
+    # Hapus file service lama
+    rm -f "/etc/systemd/system/$SERVICE_NAME"
+    
+    # Muat ulang konfigurasi systemd
+    systemctl daemon-reload
+    
+    # Hapus direktori instalasi lama
+    if [ -d "$INSTALL_DIR" ]; then
+        echo "Menghapus direktori lama: $INSTALL_DIR"
+        rm -rf "$INSTALL_DIR"
+    fi
+    
+    echo "Pembersihan selesai."
+}
+
+# Fungsi untuk menginstall paket yang dibutuhkan sistem
+install_dependencies() {
+    echo "--- Mengupdate sistem dan menginstall paket yang dibutuhkan... ---"
+    apt-get update
+    apt-get install -y python3 python3-venv python3-pip git
+}
+
+# Fungsi untuk mengambil kode dari GitHub
+clone_repository() {
+    echo "--- Mengunduh kode bot dari GitHub... ---"
+    git clone "$REPO_URL" "$INSTALL_DIR"
+    if [ $? -ne 0 ]; then
+        echo "Gagal mengunduh dari repository. Periksa kembali URL."
+        exit 1
+    fi
+    # Pindah ke direktori proyek yang benar
+    cd "$INSTALL_DIR/$PROJECT_SUBDIR"
+}
+
+# Fungsi untuk setup lingkungan virtual Python
+setup_virtualenv() {
+    echo "--- Menyiapkan lingkungan virtual Python... ---"
+    python3 -m venv venv
+    echo "--- Menginstall library Python yang dibutuhkan... ---"
+    venv/bin/pip install --upgrade pip
+    venv/bin/pip install -r requirements.txt
+}
+
+# Fungsi untuk konfigurasi interaktif
+configure_bot() {
+    echo "--- Konfigurasi Bot Interaktif ---"
+    
+    # Meminta input dari pengguna
+    read -p "Masukkan Token Bot Telegram Anda: " BOT_TOKEN
+    read -p "Masukkan ID Telegram Admin Anda: " ADMIN_ID
+
+    # Ganti placeholder di file config.py menggunakan sed
+    if [ -f "config.py" ]; then
+        sed -i "s/^TELEGRAM_TOKEN = .*/TELEGRAM_TOKEN = \"$BOT_TOKEN\"/" config.py
+        sed -i "s/^ADMIN_IDS = .*/ADMIN_IDS = [$ADMIN_ID]/" config.py
+        echo "File config.py berhasil diperbarui."
+    else
+        echo "Peringatan: file config.py tidak ditemukan!"
+    fi
+}
+
+# Fungsi untuk membuat service systemd
+setup_service() {
+    echo "--- Membuat service systemd agar bot berjalan otomatis... ---"
+    
+    SERVICE_FILE_PATH="/etc/systemd/system/$SERVICE_NAME"
+    
+    cat <<EOF > "$SERVICE_FILE_PATH"
+[Unit]
+Description=Telegram Reseller Bot
+After=network.target
+
+[Service]
+User=$RUN_AS_USER
+Group=$RUN_AS_USER
+WorkingDirectory=$INSTALL_DIR/$PROJECT_SUBDIR
+ExecStart=$INSTALL_DIR/$PROJECT_SUBDIR/venv/bin/python3 bot.py
+Restart=always
+RestartSec=5s
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+    echo "File service berhasil dibuat di $SERVICE_FILE_PATH"
+}
+
+# --- EKSEKUSI UTAMA ---
+
+# Cek apakah skrip dijalankan sebagai root
+if [ "$(id -u)" -ne 0 ]; then
+   echo "Skrip ini harus dijalankan sebagai root. Coba jalankan dengan 'sudo ./install.sh'"
+   exit 1
+fi
+
+cleanup_previous_installation
+install_dependencies
+clone_repository
+setup_virtualenv
+configure_bot
+setup_service
+
+# Memuat ulang, mengaktifkan, dan menjalankan service
+echo "--- Memuat ulang, mengaktifkan, dan menjalankan service bot... ---"
+systemctl daemon-reload
+systemctl enable "$SERVICE_NAME"
+systemctl start "$SERVICE_NAME"
+
+echo ""
+echo "============================================================"
+echo " Instalasi Selesai! Bot Anda sekarang berjalan."
+echo "============================================================"
+echo ""
+echo "Gunakan perintah berikut untuk memeriksa status:"
+echo " sudo systemctl status $SERVICE_NAME"
+echo ""
+echo "Gunakan perintah berikut untuk melihat log secara real-time:"
+echo " sudo journalctl -u $SERVICE_NAME -f"
+echo ""
